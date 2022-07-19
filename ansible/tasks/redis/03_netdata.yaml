@@ -1,0 +1,11 @@
+---
+
+- name: copy plugin config
+  copy: src=config/netdata/{{ item }} dest=/etc/netdata/python.d/{{ item }} owner=netdata group=netdata mode=0644
+  with_items:
+    - redis.conf
+
+- name: restart netdata
+  systemd:
+    state: restarted
+    name: netdata

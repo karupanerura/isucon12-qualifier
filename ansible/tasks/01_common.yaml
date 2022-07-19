@@ -1,0 +1,30 @@
+---
+
+- name: print os
+  ansible.builtin.debug:
+    var: ansible_lsb
+- name: print cpu specs
+  ansible.builtin.debug:
+    var: ansible_processor
+- name: print mem specs
+  ansible.builtin.debug:
+    var: ansible_memory_mb
+- name: print disk specs
+  ansible.builtin.debug:
+    var: ansible_mounts
+- name: print all ipv4 addresses
+  ansible.builtin.debug:
+    var: ansible_all_ipv4_addresses
+- name: print all ipv6 addresses
+  ansible.builtin.debug:
+    var: ansible_all_ipv6_addresses
+- name: print selinux state
+  ansible.builtin.debug:
+    var: ansible_selinux
+
+# - name: set timezone to Asia/Tokyo
+#   timezone: name=Asia/Tokyo
+# - name: install common packages
+#   apt: name=language-pack-ja update_cache=yes cache_valid_time=3600
+# - name: generate locale (ja_JP.UTF-8)
+#   locale_gen: name=ja_JP.UTF-8 state=present

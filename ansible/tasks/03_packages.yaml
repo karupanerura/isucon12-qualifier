@@ -1,0 +1,70 @@
+---
+
+- name: remove nano
+  apt: name=nano state=absent
+- name: install packages
+  apt:
+    name:
+      - build-essential
+      - pkg-config
+      - libjemalloc-dev
+      - cmake
+      - autoconf
+      - libssl-dev
+      - libreadline-dev
+      - libxml2-dev
+      - libpcre3-dev
+      - libsystemd-dev
+      - vim
+      - dstat
+      - sysstat
+      - tcpdump
+      - curl
+      - git
+      - perl
+      - perl-doc
+      - zip
+    update_cache: yes
+    cache_valid_time: 90
+
+- name: uninstall community mysql libs for official mysql libs
+  apt:
+    name:
+      - mysql-common
+      - mysql-community-client
+      - libmysqlclient-dev
+    state: absent
+    update_cache: yes
+    cache_valid_time: 90
+  when: install_mysql_libs and not use_community_mysql and mysql_uninstall
+
+- name: uninstall official mysql libs for community mysql libs
+  apt:
+    name:
+      - mysql-common
+      - mysql-client
+      - libmysqlclient-dev
+    state: absent
+    update_cache: yes
+    cache_valid_time: 90
+  when: install_mysql_libs and use_community_mysql and mysql_uninstall
+
+- name: install official mysql libs
+  apt:
+    name:
+      - mysql-common
+      - mysql-client
+      - libmysqlclient-dev
+    update_cache: yes
+    cache_valid_time: 90
+  when: install_mysql_libs and not use_community_mysql
+
+- name: install community mysql libs
+  apt:
+    name:
+      - mysql-common
+      - mysql-community-client
+      - libmysqlclient-dev
+    update_cache: yes
+    cache_valid_time: 90
+  when: install_mysql_libs and use_community_mysql

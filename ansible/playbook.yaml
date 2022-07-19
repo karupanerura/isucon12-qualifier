@@ -1,0 +1,57 @@
+---
+
+- hosts: all
+  become: yes
+  tasks:
+    - import_tasks: tasks/01_common.yaml
+    - import_tasks: tasks/02_apt.yaml # XXX: tags:mysqlのタスクはこのaptの設定変更に依存しているので注意
+    - import_tasks: tasks/03_packages.yaml
+    - import_tasks: tasks/04_tools.yaml
+    - import_tasks: tasks/05_netdata.yaml
+    # - import_tasks: tasks/06_kernel.yaml # TODO: 悪化することもあるので状況に応じて/バックアップを取ってから
+  tags: init
+  vars:
+    install_mysql_libs: no
+    use_community_mysql: &use_community_mysql no
+    mysql_version: &mysql_version 8.0
+    mysql_uninstall: &mysql_uninstall no # アップグレードの際はyesにする
+
+- hosts: all
+  become: yes
+  tasks:
+    - import_tasks: tasks/05_netdata.yaml
+  tags: netdata
+
+- hosts: all
+  become: yes
+  tasks:
+    - import_tasks: tasks/06_kernel.yaml
+  tags: kernel
+
+- hosts: proxy
+  become: yes
+  tasks:
+    - import_tasks: tasks/nginx/01_install.yaml
+    - import_tasks: tasks/nginx/02_configuration.yaml
+    - import_tasks: tasks/nginx/03_netdata.yaml
+  tags: nginx
+
+- hosts: db
+  become: yes
+  tasks:
+    # SHOULD *NOT* INSTALL AUTOMATICALY - import_tasks: tasks/mysql/01_install.yaml
+    - import_tasks: tasks/mysql/02_configuration.yaml
+    - import_tasks: tasks/mysql/03_netdata.yaml
+  tags: mysql
+  vars:
+    use_community_mysql: *use_community_mysql
+    mysql_version: *mysql_version
+    mysql_uninstall: *mysql_uninstall
+
+- hosts: redis
+  become: yes
+  tasks:
+    - import_tasks: tasks/redis/01_install.yaml
+    - import_tasks: tasks/redis/02_configuration.yaml
+    - import_tasks: tasks/redis/03_netdata.yaml
+  tags: redis

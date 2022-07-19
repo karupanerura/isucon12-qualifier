@@ -1,0 +1,76 @@
+---
+
+- name: check data dir
+  stat:
+    path: /var/lib/mysql
+  register: mysql_data_dir
+  when: mysql_uninstall
+
+- name: check etc dir
+  stat:
+    path: /etc/mysql
+  register: mysql_etc_dir
+  when: mysql_uninstall
+
+- name: backup old datadir
+  copy:
+    src: /var/lib/mysql
+    dest: "/var/lib/mysql.{{ansible_date_time.epoch}}.bak"
+    remote_src: yes
+  when: mysql_uninstall and mysql_data_dir.stat.exists
+
+- name: backup old etc
+  copy:
+    src: /etc/mysql
+    dest: "/etc/mysql.{{ansible_date_time.epoch}}.bak"
+    remote_src: yes
+  when: mysql_uninstall and mysql_etc_dir.stat.exists
+
+- name: uninstall mariadb server
+  apt:
+    name:
+      - mariadb-common
+      - mariadb-client
+      - mariadb-server
+      - libmariadbclient-dev
+    state: absent
+    update_cache: yes
+    cache_valid_time: 90
+  when: use_community_mysql and mysql_uninstall
+
+- name: uninstall community mysql server
+  apt:
+    name:
+      - mysql-common
+      - mysql-community-client
+      - mysql-community-server
+      - libmysqlclient-dev
+    state: absent
+    update_cache: yes
+    cache_valid_time: 90
+  when: not use_community_mysql and mysql_uninstall
+
+- name: clean up /var/lib/mysql
+  file: path=/var/lib/mysql state=absent
+  when: mysql_uninstall
+
+- name: clean up /etc/mysql
+  file: path=/etc/mysql state=absent
+  when: mysql_uninstall
+
+- name: install community mysql server
+  apt:
+    name: mysql-community-server
+    update_cache: yes
+  when: use_community_mysql
+
+- name: install official mysql server
+  apt:
+    name: mysql-server
+    update_cache: yes
+  when: not use_community_mysql
+
+- name: enable mysql
+  systemd:
+    enabled: yes
+    name: mysql

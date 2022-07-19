@@ -1,0 +1,10 @@
+---
+
+- name: install redis config
+  copy: src=config/redis.conf dest=/etc/redis/redis.conf owner=root group=root mode=0644
+
+- name: restart redis
+  systemd:
+    state: restarted
+    name: redis-server
+

@@ -1,0 +1,9 @@
+---
+
+- name: install mysql config
+  copy: src=config/mysqld.cnf dest=/etc/mysql/my.cnf owner=root group=root mode=0644
+
+- name: restart mysql
+  systemd:
+    state: restarted
+    name: mysql

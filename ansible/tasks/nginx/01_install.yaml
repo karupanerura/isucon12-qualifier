@@ -1,0 +1,12 @@
+---
+
+- name: install package
+  apt:
+    name: nginx
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: enable nginx
+  systemd:
+    enabled: yes
+    name: nginx

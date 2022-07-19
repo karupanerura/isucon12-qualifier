@@ -1,0 +1,22 @@
+---
+
+- name: install nginx
+  copy: src=config/nginx.conf dest=/etc/nginx/nginx.conf owner=root group=root mode=0644
+
+- name: prepare cache directory
+  file:
+    path: /var/lib/nginx/cache/isu10q
+    state: directory
+    mode: '0755'
+
+- name: reload nginx
+  systemd:
+    state: reloaded
+    name: nginx
+
+- name: netdata.log
+  file:
+    path: /var/log/nginx/netdata.log
+    owner: netdata
+    group: netdata
+    mode: '0666'

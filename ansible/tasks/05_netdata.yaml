@@ -1,0 +1,28 @@
+---
+
+- name: check netdata installation status
+  stat:
+    path: /usr/sbin/netdata
+  register: netdata_bin
+- name: download netdata installer
+  get_url: url=https://my-netdata.io/kickstart.sh dest=/tmp/netdata-kickstart.sh
+  when: netdata_bin.stat.exists == False
+- name: install netdata
+  command: bash /tmp/netdata-kickstart.sh --dont-wait --no-updates
+  when: netdata_bin.stat.exists == False
+
+- name: copy plugin config
+  copy: src=config/netdata/{{ item }} dest=/etc/netdata/python.d/{{ item }} owner=netdata group=netdata mode=0644
+  with_items:
+    - go_expvar.conf
+
+- name: enable go_expvar plugin
+  lineinfile:
+    path: /usr/lib/netdata/conf.d/python.d.conf
+    regexp: '^go_expvar:'
+    line: 'go_expvar: yes'
+
+- name: restart netdata
+  systemd:
+    state: restarted
+    name: netdata

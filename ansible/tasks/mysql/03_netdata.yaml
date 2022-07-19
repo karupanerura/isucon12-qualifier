@@ -1,0 +1,31 @@
+---
+
+- name: copy plugin config
+  copy: src=config/netdata/{{ item }} dest=/etc/netdata/python.d/{{ item }} owner=netdata group=netdata mode=0644
+  with_items:
+    - mysql.conf
+
+- name: install dependency for netdata mysql plugin
+  apt:
+    name:
+      - python-dev
+      - default-libmysqlclient-dev
+    update_cache: yes
+    cache_valid_time: 90
+
+- name: install pypi module for netdata mysql plugin
+  pip:
+    name:
+      - mysqlclient
+
+- name: create mysql user for netdata
+  mysql_user:
+    name: netdata
+    host: localhost
+    priv: '*.*:USAGE'
+    state: present
+
+- name: restart netdata
+  systemd:
+    state: restarted
+    name: netdata

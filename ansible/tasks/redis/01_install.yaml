@@ -1,0 +1,97 @@
+---
+
+- name: check redis installation status
+  stat:
+    path: /usr/local/bin/redis-server
+  register: redis_server_bin
+
+- name: install redis
+  block:
+    - name: add redis server group
+      group:
+        name: redis
+        state: present
+    - name: add redis server user
+      user:
+        name: redis
+        shell: /bin/false
+        group: redis
+        comment: Redis server system user
+        system: yes
+    - name: create /tmp/build
+      file: path=/tmp/build state=directory mode=0755
+    - name: download redis
+      get_url: url=https://github.com/redis/redis/archive/7.0.3.tar.gz dest=/tmp/redis.tar.gz
+    - name: unarchive redis
+      unarchive: src=/tmp/redis.tar.gz dest=/tmp/build mode=0755 copy=no
+    - name: build redis
+      make:
+        chdir: /tmp/build/redis-7.0.3
+        params:
+          BUILD_WITH_SYSTEMD: "yes"
+          USE_SYSTEMD: "yes"
+    - name: install redis
+      make:
+        chdir: /tmp/build/redis-7.0.3
+        target: install
+    - name: create redis directories
+      file: path={{ item }} state=directory mode=0755 owner=redis group=redis
+      with_items:
+        - /etc/redis
+        - /var/lib/redis
+        - /var/log/redis
+    - name: install default config file
+      copy:
+        src: /tmp/build/redis-7.0.3/redis.conf
+        dest: /etc/redis/redis.conf
+        owner: redis
+        group: redis
+        mode: '0644'
+        remote_src: yes
+    - name: fix save directory
+      lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^dir \./'
+        line: dir /var/lib/redis
+    - name: install systremd file
+      copy:
+        src: /tmp/build/redis-7.0.3/utils/systemd-redis_server.service
+        dest: /etc/systemd/system/redis-server.service
+        owner: root
+        group: root
+        mode: '0644'
+        remote_src: yes
+    - name: use /etc/redis/redis.conf as config file
+      lineinfile:
+        path: /etc/systemd/system/redis-server.service
+        regexp: '^ExecStart='
+        line: ExecStart=/usr/local/bin/redis-server /etc/redis/redis.conf --supervised systemd --daemonize no
+    - name: execute by redis system user
+      lineinfile:
+        path: /etc/systemd/system/redis-server.service
+        regexp: '^#User=redis'
+        line: User=redis
+    - name: execute by redis system group
+      lineinfile:
+        path: /etc/systemd/system/redis-server.service
+        regexp: '^#Group=redis'
+        line: Group=redis
+    - name: depend on /var/lib/redis
+      lineinfile:
+        path: /etc/systemd/system/redis-server.service
+        regexp: '^#AssertPathExists=/var/lib/redis'
+        line: AssertPathExists=/var/lib/redis
+    - name: execute on /var/lib/redis
+      lineinfile:
+        path: /etc/systemd/system/redis-server.service
+        regexp: '^#WorkingDirectory=/var/lib/redis'
+        line: WorkingDirectory=/var/lib/redis
+    - name: enable redis
+      systemd:
+        daemon_reload: yes
+        enabled: yes
+        state: started
+        name: redis-server
+    - name: clean up /tmp/build
+      file: path=/tmp/build state=absent
+  when: redis_server_bin.stat.exists == False
