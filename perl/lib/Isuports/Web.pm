@@ -113,6 +113,7 @@ sub create_tenant_db($id) {
     unless ($schema) {
         open my $fh, '<', TENANT_DB_SCHEMA_FILEPATH
            or die "$!";
+        local $/;
         $schema = <$fh>;
     }
 
