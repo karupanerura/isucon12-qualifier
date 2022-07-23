@@ -35,8 +35,8 @@ CREATE TABLE `player_score_new` (
   `score` bigint NOT NULL,
   `created_at` bigint NOT NULL,
   `updated_at` bigint NOT NULL,
-  PRIMARY KEY (`tenant_id`, `player_id`, `competition_id`)
-  INDEX `ranking_idx` (`tenant_id`, `competition_id`, `score`);
+  PRIMARY KEY (`tenant_id`, `player_id`, `competition_id`),
+  INDEX `ranking_idx` (`tenant_id`, `competition_id`, `score`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 INSERT INTO player_score_new (tenant_id, competition_id, player_id, score, created_at, updated_at) SELECT tenant_id, CONV(competition_id,16,10) AS competition_id, CONV(player_id,16,10) AS player_id, score, created_at, updated_at FROM (SELECT id, tenant_id, competition_id, player_id, score, created_at, updated_at, ROW_NUMBER() OVER (PARTITION BY tenant_id, competition_id, player_id ORDER BY row_num DESC) AS `rank` FROM player_score) a WHERE a.rank = 1;
 RENAME TABLE player_score TO player_score_old, player_score_new TO player_score;
