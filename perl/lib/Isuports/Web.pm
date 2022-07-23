@@ -588,15 +588,15 @@ sub players_add_handler($self, $c) {
     my $ends = min(5000, $#display_names);
     while ($begins < $#display_names) {
         my @rows = map [
-            $first_id++,
-            $v->{tenant_id}, 
-            $_,
-            false,
-            $now, 
-            $now,
+            id => $first_id++,
+            tenant_id => $v->{tenant_id}, 
+            display_name => $_,
+            is_disqualified => false,
+            created_at => $now, 
+            updated_at => $now,
         ], @display_names[$begins..$ends];
 
-        my ($stmt, @bind) = $SQL_MAKER->insert_multi('player', [qw/id tenant_id display_name is_disqualified created_at updated_at/], \@rows);
+        my ($stmt, @bind) = $SQL_MAKER->insert_multi('player', \@rows);
         $tenant_db->query($stmt, @bind);
         $begins = $ends+1;
         $ends = min($ends+5000, $#display_names);
