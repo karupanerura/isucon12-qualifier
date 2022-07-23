@@ -934,7 +934,7 @@ sub player_handler($self, $c) {
         $v->{tenant_id},
     );
 
-    my %competition_score_map = @{ $tenant_db->selectcol_arrayref(
+    my %competition_score_map = map { $_->{competition_id} => $_->{score} } @{ $tenant_db->select_all(
         "SELECT competition_id, score FROM player_score WHERE tenant_id = ? AND competition_id IN (?) AND player_id = ?",
         { Columns => [ 1, 2 ] },
         $v->{tenant_id}, [map { $_->{id} } @$competitions], $player->{id},
@@ -945,7 +945,7 @@ sub player_handler($self, $c) {
         next unless $competition_score_map{$comp->{id}};
         push @player_score_details => {
             competition_title => $comp->{title},
-            score             =>  $competition_score_map{$comp->{id}},
+            score             => $competition_score_map{$comp->{id}},
         }
     }
 
