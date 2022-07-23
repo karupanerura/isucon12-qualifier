@@ -5,6 +5,7 @@ use experimental qw(builtin try isa defer);
 use builtin qw(true false);
 
 use Kossy;
+use List::Util qw/max min/;
 use HTTP::Status qw(:constants);
 use Crypt::JWT qw(decode_jwt);
 use Crypt::PK::RSA;
@@ -13,6 +14,10 @@ use Text::CSV_XS;
 use DBIx::Sunny;
 use Cpanel::JSON::XS;
 use Cpanel::JSON::XS::Type;
+use Redis::Jet;
+use SQL::Maker;
+
+SQL::Maker->load_plugin('InsertMulti');
 
 # sqliteのクエリログを出力する設定
 # 環境変数 ISUCON_SQLITE_TRACE_FILE を設定すると、そのファイルにクエリログをJSON形式で出力する
@@ -42,6 +47,10 @@ use constant {
 # 正しいテナント名の正規表現
 use constant TENANT_NAME_REGEXP => qr/^[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
 
+my $SQL_MAKER = SQL::Maker->new(
+    driver => 'MySQL',
+);
+
 # 管理用DBに接続する
 sub connect_admin_db() {
     my $host     = $ENV{ISUCON_DB_HOST}       || '127.0.0.1';
@@ -58,29 +67,52 @@ sub connect_admin_db() {
     return $dbh;
 }
 
-# テナントDBのパスを返す
-sub tenant_db_path($id) {
-    my $tenant_db_dir = $ENV{ISUCON_TENANT_DB_DIR} || "../tenant_db";
-    return join '/', $tenant_db_dir, sprintf('%d.db', $id);
-}
-
 # テナントDBに接続する
 sub connect_to_tenant_db($id) {
-    my $p = tenant_db_path($id);
+    my $host_id  = 1 + ((1+$id) % 2);
+    my $host     = $ENV{"ISUCON_TENANT${$host_id}_DB_HOST"} || '127.0.0.1';
+    my $port     = $ENV{ISUCON_DB_PORT}         || '3306';
+    my $user     = $ENV{ISUCON_DB_USER}         || 'isucon';
+    my $password = $ENV{ISUCON_DB_PASSWORD}     || 'isucon';
+    my $dbname   = "isuports_tenant_$id";
 
-    my $dsn = "dbi:SQLite:$p";
-    my $dbh = DBIx::Sunny->connect($dsn, "", "", {});
+    my $dsn = "dbi:mysql:database=$dbname;host=$host;port=$port";
+    my $dbh = DBIx::Sunny->connect($dsn, $user, $password, {
+        mysql_enable_utf8mb4 => 1,
+        mysql_auto_reconnect => 1,
+    });
     return $dbh;
 }
 
 # テナントDBを新規に作成する
 sub create_tenant_db($id) {
-    my $p = tenant_db_path($id);
+    my $host_id  = 1 + ((1+$id) % 2);
+    my $host     = $ENV{"ISUCON_TALENT${$host_id}_DB_HOST"} || '127.0.0.1';
+    my $port     = $ENV{ISUCON_DB_PORT}         || '3306';
+    my $user     = $ENV{ISUCON_DB_USER}         || 'isucon';
+    my $password = $ENV{ISUCON_DB_PASSWORD}     || 'isucon';
 
-    my $err = system("sh", "-c", sprintf("sqlite3 %s < %s", $p, TENANT_DB_SCHEMA_FILEPATH));
-    if ($err) {
-        return sprintf("failed to exec sqlite3 %s < %s, %s", $p, TENANT_DB_SCHEMA_FILEPATH, $err)
+    my $dsn = "dbi:mysql:database=isuports_talent_${host_id};host=$host;port=$port";
+    my $dbh = DBIx::Sunny->connect($dsn, $user, $password, {
+        mysql_enable_utf8mb4   => 1,
+        mysql_auto_reconnect   => 1,
+        mysql_multi_statements => 1,
+    });
+
+    state $schema;
+    unless ($schema) {
+        open my $fh, '<', TENANT_DB_SCHEMA_FILEPATH
+           or die "$!";
+        $schema = <$fh>;
     }
+
+    try {
+        $dbh->query($schema);
+    }
+    catch ($err) {
+        return sprintf("failed to exec MySQL %s, %s", TENANT_DB_SCHEMA_FILEPATH, $err)
+    }
+
     return;
 }
 
@@ -88,31 +120,15 @@ sub admin_db($self) {
     $self->{dbh} ||= connect_admin_db();
 }
 
-
 # システム全体で一意なIDを生成する
-sub dispense_id($self) {
-    my ($id, $last_err);
-    for (my $i = 0; $i < 100; $i++) {
-        try {
-            $self->admin_db->query("REPLACE INTO id_generator (stub) VALUES (?);", "a")
-        }
-        catch ($e) {
-            if ($DBI::err == 1213) { # deadlock
-                $last_err = sprintf("error REPLACE INTO id_generator: %s", $e);
-                next;
-            }
-            die $e; #rethrow
-        }
-
-        $id = $self->admin_db->last_insert_id;
-        last;
+sub dispense_id($self, $count = 1) {
+    my $jet = Redis::Jet->new(server => $ENV{ISUCON_REDIS_SERVER});
+    my $ret = $count == 1 ? $jet->command(qw/INCR id_generator/) : $jet->command(qw/INCRBY id_generator/, $count);
+    if ($ret != 0) {
+        return $ret - $count + 1, undef;
     }
-    if ($id != 0) {
-        return sprintf('%x', $id), undef;
-    }
-    return "", $last_err;
+    return undef, sprintf("INCR id_generator failed: %s", $ret);
 }
-
 
 # SaaS管理者向けAPI
 post '/api/admin/tenants/add'     => \&tenants_add_handler;
@@ -256,6 +272,15 @@ sub retrieve_player($self, $c, $tenant_db, $id) {
     return $player, undef;
 }
 
+# 参加者を取得する
+sub retrieve_players_by_ids($self, $c, $tenant_db, $ids) {
+    my $players = $tenant_db->select_all("SELECT * FROM player WHERE id IN (?)", $ids);
+    unless ($players || @$players) {
+        return undef, sprintf("error Select players: ids=%s", (join ",", @$ids));
+    }
+    return $players, undef;
+}
+
 # 参加者を認可する
 # 参加者向けAPIで呼ばれる
 sub authorize_player($self, $c, $tenant_db, $id) {
@@ -393,39 +418,25 @@ sub billing_report_by_competition($self, $c, $tenant_db, $tenant_id, $competiton
     }
 
     # ランキングにアクセスした参加者のIDを取得する
-    my $visit_history_summaries = $self->admin_db->select_all(
-        "SELECT player_id, MIN(created_at) AS min_created_at FROM visit_history WHERE tenant_id = ? AND competition_id = ? GROUP BY player_id",
-        $tenant_id,
-        $comp->{id},
-    );
-
-    my $billing_map = {};
-    for my $vh ($visit_history_summaries->@*) {
-        # competition.finished_atよりもあとの場合は、終了後に訪問したとみなして大会開催内アクセス済みとみなさない
-        if ($comp->{finished_at} && $comp->{finished_at} < $vh->{min_created_at}) {
-            next
-        }
-        $billing_map->{$vh->{player_id}} = "visitor";
+    my $jet = Redis::Jet->new(server => $ENV{ISUCON_REDIS_SERVER});
+    my $player_ids = $jet->command('SMEMBERS', sprintf('visit_set_%s_%s', $tenant_id, $comp->{id}));
+    if (!$player_ids || ref $player_ids ne 'ARRAY') {
+        fail($c, HTTP_INTERNAL_SERVER_ERROR, "SET id_generator failed: %s", $player_ids);
     }
 
-    # player_scoreを読んでいるときに更新が走ると不整合が起こるのでロックを取得する
-    my $fl = flock_by_tenant_id($tenant_id);
-    defer { close $fl }
+    my %billing_map = map { $_ => 'visitor' } @$player_ids;
 
     # スコアを登録した参加者のIDを取得する
-    my $scored_players = $tenant_db->select_all(
-        "SELECT DISTINCT(player_id) AS player_id FROM player_score WHERE tenant_id = ? AND competition_id = ?",
-        $tenant_id, $comp->{id},
+    my $scored_player_ids = $tenant_db->dbh->selectcol_arrayref(
+        "SELECT player_id FROM player_score WHERE tenant_id = ? AND competition_id = ?",
+        undef, $tenant_id, $comp->{id},
     );
-    for my $sp ($scored_players->@*) {
-        # スコアが登録されている参加者
-        $billing_map->{$sp->{player_id}} = "player"
-    }
+    $billing_map{$_} = 'player' for @$scored_player_ids;
 
     # 大会が終了している場合のみ請求金額が確定するので計算する
     my ($player_count, $visitor_count) = (0,0);
     if ($comp->{finished_at}) {
-        for my $category (values $billing_map->%*) {
+        for my $category (values %billing_map) {
             if ($category eq 'player') {
                 $player_count++
             }
@@ -546,19 +557,10 @@ sub players_list_handler($self, $c) {
         $v->{tenant_id},
     );
 
-    my $player_details = [];
-    for my $p ($players->@*) {
-        push $player_details->@* => {
-            id => $p->{id},
-            display_name => $p->{display_name},
-            is_disqualified => $p->{is_disqualified},
-        };
-    }
-
     return $c->render_json({
         status => true,
         data => {
-            players => $player_details,
+            players => $players,
         }
     }, PlayersListHandlerSuccess);
 }
@@ -581,29 +583,25 @@ sub players_add_handler($self, $c) {
 
     my @display_names = $c->request->body_parameters->get_all("display_name[]");
 
+    my ($first_id, $err) = $self->dispense_id(scalar @display_names);
+    if ($err) {
+        fail($c, HTTP_INTERNAL_SERVER_ERROR, "error dispenseID: %s", $err);
+    }
+    my $now = time;
+
     my $player_details = [];
     for my $display_name (@display_names) {
-        my ($id, $err) = $self->dispense_id();
-        if ($err) {
-            fail($c, HTTP_INTERNAL_SERVER_ERROR, "error dispenseID: %s", $err);
-        }
-
-        my $now = time;
+        my $id = sprintf('%x', $first_id++);
 
         $tenant_db->query(
             "INSERT INTO player (id, tenant_id, display_name, is_disqualified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
             $id, $v->{tenant_id}, $display_name, false, $now, $now,
         );
 
-        (my $player, $err) = $self->retrieve_player($c, $tenant_db, $id);
-        if ($err) {
-            fail($c, HTTP_INTERNAL_SERVER_ERROR, sprintf("error retrieve_player: %w", $err));
-        }
-
         push $player_details->@* => {
-            id              => $player->{id},
-            display_name    => $player->{display_name},
-            is_disqualified => $player->{is_disqualified},
+            id              => $id,
+            display_name    => $display_name,
+            is_disqualified => false,
         }
     }
 
@@ -689,7 +687,7 @@ sub competitions_add_handler($self, $c) {
 
     $tenant_db->query(
         "INSERT INTO competition (id, tenant_id, title, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        $id, $v->{tenant_id}, $title, undef, $now, $now,
+        sprintf('%x', $id), $v->{tenant_id}, $title, undef, $now, $now,
     );
 
     return $c->render_json({
@@ -783,31 +781,34 @@ sub competition_score_handler($self, $c) {
         fail($c, HTTP_BAD_REQUEST, "invalid CSV headers");
     }
 
-    # DELETEしたタイミングで参照が来ると空っぽのランキングになるのでロックする
-    my $fl = flock_by_tenant_id($v->{tenant_id});
-    defer { close $fl }
+    (my $first_id, $err) = $self->dispense_id(1000);
+    if ($err) {
+        fail($c, HTTP_INTERNAL_SERVER_ERROR, "error dispenseID: %s", $err);
+    }
 
+    my $current_id = $first_id;
     my $row_num = 0;
-    my $player_score_rows = [];
+    my %player_score_map;
+    my $now = time;
     while (my $row = $csv->getline($fh)) {
         $row_num++;
         unless ($row->@* == 2) {
             fail($c, sprintf("row must have two columns: %s", join ',', $row->@*));
         }
 
-        my ($player_id, $score_str) = $row->@*;
-        my ($player, $err) = $self->retrieve_player($c, $tenant_db, $player_id);
-        if ($err) { # 存在しない参加者が含まれている
-            fail($c, HTTP_BAD_REQUEST, sprintf('player not found: %s', $player_id));
+        if ($current_id == $first_id + 1000) {
+            ($first_id, $err) = $self->dispense_id(1000);
+            if ($err) {
+                fail($c, HTTP_INTERNAL_SERVER_ERROR, "error dispenseID: %s", $err);
+            }
+            $current_id = $first_id;
         }
+        my $id = sprintf('%x', $current_id++);
+
+        my ($player_id, $score_str) = $row->@*;
         my $score = $score_str+0;
 
-        (my $id, $err) = $self->dispense_id();
-        if ($err) {
-            fail($c, HTTP_INTERNAL_SERVER_ERROR, "error dispenseID: %s", $err);
-        }
-        my $now = time;
-        push $player_score_rows->@* => {
+        my %record = (
             id              => $id,
             tenant_id       => $v->{tenant_id},
             player_id       => $player_id,
@@ -816,26 +817,48 @@ sub competition_score_handler($self, $c) {
             row_num         => $row_num,
             created_at      => $now,
             updated_at      => $now,
-        };
+        );
+        $player_score_map{$player_id} = \%record;
     }
 
-    $tenant_db->query(
-        "DELETE FROM player_score WHERE tenant_id = ? AND competition_id = ?",
-        $v->{tenant_id},
-        $competition_id,
-    );
+    (my $players, $err) = $self->retrieve_players_by_ids($c, $tenant_db, [keys %player_score_map]);
+    if ($err) { # 存在しない参加者が含まれている
+        fail($c, HTTP_INTERNAL_SERVER_ERROR, sprintf('failed to get player'));
+    }
+    my @player_score_rows = sort { $a->{row_num} <=> $b->{row_num} } values %player_score_map;
+    if (@player_score_rows != @$players) {
+        fail($c, HTTP_BAD_REQUEST, sprintf('player not found'));
+    }
 
-    for my $player_score ($player_score_rows->@*) {
-        $tenant_db->query(
-            "INSERT INTO player_score (id, tenant_id, player_id, competition_id, score, row_num, created_at, updated_at) VALUES (:id, :tenant_id, :player_id, :competition_id, :score, :row_num, :created_at, :updated_at)",
-            $player_score,
-        );
+    {
+        my $txn = $tenant_db->txn_scope();
+        try {
+            $tenant_db->query(
+                "DELETE FROM player_score WHERE tenant_id = ? AND competition_id = ?",
+                $v->{tenant_id},
+                $competition_id,
+            );
+
+            my $begins = 0;
+            my $ends = min(5000, $#player_score_rows);
+            while ($begins < $#player_score_rows) {
+                my ($stmt, @bind) = $SQL_MAKER->insert_multi('player_score', [qw/id tenant_id player_id competition_id score row_num created_at updated_at/], @player_score_rows[$begins..$ends]);
+                $tenant_db->query($stmt, @bind);
+                $begins = $ends+1;
+                $ends = min($ends+5000, $#player_score_rows);
+            }
+
+            $txn->commit();
+        } catch ($e) {
+            $txn->rollback();
+            fail($c, HTTP_INTERNAL_SERVER_ERROR, "$e");
+        }
     }
 
     return $c->render_json({
         status => true,
         data => {
-            rows => scalar $player_score_rows->@*,
+            rows => scalar @player_score_rows,
         }
     }, ScoreHandlerSuccess);
 }
@@ -1001,76 +1024,26 @@ sub competition_ranking_handler($self, $c) {
 
     my $now = time;
 
-    my $tenant = $self->admin_db->select_row(
-        "SELECT * FROM tenant WHERE id = ?",
+    my $tenant_id = $self->admin_db->select_one(
+        "SELECT id FROM tenant WHERE id = ?",
         $v->{tenant_id},
     );
 
-    $self->admin_db->query(
-        "INSERT INTO visit_history (player_id, tenant_id, competition_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-        $v->{player_id}, $tenant->{id}, $competition_id, $now, $now,
-    );
-
-    my $rank_after = $c->request->query_parameters->{rank_after} || 0;
-
-    # player_scoreを読んでいるときに更新が走ると不整合が起こるのでロックを取得する
-    my $fl = flock_by_tenant_id($v->{tenant_id});
-    defer { close $fl }
-
-    my $player_scores = $tenant_db->select_all(
-        "SELECT * FROM player_score WHERE tenant_id = ? AND competition_id = ? ORDER BY row_num DESC",
-        $tenant->{id}, $competition_id,
-    );
-
-    my $ranks = [];
-    my $scored_player_set = {};
-
-    for my $player_score ($player_scores->@*) {
-        # player_scoreが同一player_id内ではrow_numの降順でソートされているので
-        # 現れたのが2回目以降のplayer_idはより大きいrow_numでスコアが出ているとみなせる
-        if (exists $scored_player_set->{$player_score->{player_id}}) {
-            next;
+    if (!$competition->{finished_at} || ($now < $competition->{finished_at})) {
+        my $jet = Redis::Jet->new(server => $ENV{ISUCON_REDIS_SERVER});
+        my $ret = $jet->command('SADD', sprintf('visit_set_%s_%s', $tenant_id, $competition->{id}), $v->{player_id});
+        if ($ret != 0 && $ret != 1) {
+            fail($c, HTTP_INTERNAL_SERVER_ERROR, "SET id_generator failed: %s", $ret);
         }
-
-        $scored_player_set->{$player_score->{player_id}} = !!1;
-        my ($player, $err) = $self->retrieve_player($c, $tenant_db, $player_score->{player_id});
-        if ($err) {
-            fail($c, HTTP_INTERNAL_SERVER_ERROR, sprintf("error retrieve_player: %s", $err));
-        }
-
-        push $ranks->@* => {
-            score               => $player_score->{score},
-            player_id           => $player->{id},
-            player_display_name => $player->{display_name},
-            row_num             => $player_score->{row_num},
-        };
     }
 
-    my @sorted_ranks = sort {
-        if ($a->{score} == $b->{score}) {
-            return $a->{row_num} <=> $b->{row_num}
-        }
-        return $b->{score} <=> $a->{score}
-    } $ranks->@*;
-
-    my $page_ranks = [];
-    for (my $i = 0; $i < @sorted_ranks; $i++) {
-        my $rank = $sorted_ranks[$i];
-
-        if ($i < $rank_after) {
-            next;
-        }
-
-        push $page_ranks->@* => {
-            rank                => $i + 1,
-            score               => $rank->{score},
-            player_id           => $rank->{player_id},
-            player_display_name => $rank->{player_display_name},
-        };
-
-        if ($page_ranks->@* >= 100) {
-            last;
-        }
+    my $rank_after = $c->request->query_parameters->{rank_after} || 0;
+    my $page_ranks = $tenant_db->select_all(
+        "SELECT ps.score, ps.player_id, p.display_name AS player_display_name FROM player_score ps INNER JOIN player p ON p.id = ps.player_id WHERE ps.tenant_id = ? AND ps.competition_id = ? ORDER BY score DESC OFFSET ? LIMIT 100",
+        $tenant_id, $competition_id, $rank_after,
+    );
+    for my $idx (keys @$page_ranks) {
+        $page_ranks->[$idx]->{rank} = $rank_after + $idx + 1;
     }
 
     return $c->render_json({
@@ -1245,6 +1218,12 @@ sub initialize_handler($self, $c) {
     my $e = system(INITIALIZE_SCRIPT);
     if ($e) {
         fail($c, HTTP_INTERNAL_SERVER_ERROR, "error exec.Command: %s", $e);
+    }
+
+    my $jet = Redis::Jet->new(server => $ENV{ISUCON_REDIS_SERVER});
+    my $ret = $jet->command(qw/SET id_generator 2678400000/);
+    if (!$ret || $ret ne 'OK') {
+        fail($c, HTTP_INTERNAL_SERVER_ERROR, "SET id_generator failed: %s", $ret);
     }
 
     return $c->render_json({

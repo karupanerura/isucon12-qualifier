@@ -10,3 +10,4 @@ requires 'DBIx::Sunny', '0.9992';
 requires 'DBIx::Tracer', '0.03';
 requires 'Crypt::JWT', '0.034';
 requires 'Text::CSV_XS', '1.48';
+requires 'Redis::Jet';
