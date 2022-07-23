@@ -1217,6 +1217,12 @@ sub initialize_handler($self, $c) {
         fail($c, HTTP_INTERNAL_SERVER_ERROR, "error exec.Command: %s", $e);
     }
 
+    # Redis初期化
+    $e = system('cat ../redis-init.txt | redis-cli --pipe');
+    if ($e) {
+        fail($c, HTTP_INTERNAL_SERVER_ERROR, "error exec.Command: %s", $e);
+    }
+
     # id_generatorのリセット
     my $jet = Redis::Jet->new(server => $ENV{ISUCON_REDIS_SERVER});
     my $ret = $jet->command(qw/SET id_generator 2678400000/);
