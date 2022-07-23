@@ -817,7 +817,7 @@ sub competition_score_handler($self, $c) {
     if ($err) {
         fail($c, HTTP_INTERNAL_SERVER_ERROR, sprintf('failed to get player'));
     }
-    my @player_score_rows = sort { $a->{row_num} <=> $b->{row_num} } values %player_score_map;
+    my @player_score_rows = map $_->[1], sort { $a->[0] <=> $b->[0] } map { [delete $_->{row_num}, $_] } values %player_score_map;
     if (@player_score_rows != @$players) {# 存在しない参加者が含まれている
         fail($c, HTTP_BAD_REQUEST, sprintf('player not found'));
     }
