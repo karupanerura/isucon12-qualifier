@@ -992,10 +992,11 @@ sub competition_ranking_handler($self, $c) {
     my $player_id = hex($player_id_hex);
     $self->authorize_player($c, $tenant_db, $player_id);
 
-    my $competition_id = $c->args->{competition_id};
-    unless ($competition_id) {
+    my $competition_id_hex = $c->args->{competition_id};
+    unless ($competition_id_hex) {
         fail($c, HTTP_BAD_REQUEST, "competition_id is required");
     }
+    my $competition_id = hex($competition_id_hex);
 
     # 大会の存在確認
     my ($competition, $err) = $self->retrieve_competition($c, $tenant_db, $competition_id);
@@ -1032,7 +1033,7 @@ sub competition_ranking_handler($self, $c) {
         status => true,
         data => {
             competition => {
-                id          => sprintf('%x', $competition->{id}),
+                id          => $competition_id_hex,
                 title       => $competition->{title},
                 is_finished => !!$competition->{finished_at},
             },
