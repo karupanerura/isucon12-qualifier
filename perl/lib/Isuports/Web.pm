@@ -117,7 +117,7 @@ sub create_tenant_db($id) {
     }
 
     try {
-        my $dbh = connect_to_tenant_db($id);
+        $dbh->query("USE isuports_tenant_$id");
         $dbh->query($schema);
     }
     catch ($err) {
