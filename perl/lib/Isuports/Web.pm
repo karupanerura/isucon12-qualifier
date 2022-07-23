@@ -914,14 +914,15 @@ sub player_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    my $player_id_hex = $v->{player_id};
-    my $player_id = hex($player_id_hex);
-    $self->authorize_player($c, $tenant_db, $player_id);
+    my $viewer_player_id_hex = $v->{player_id};
+    my $viewer_player_id = hex($viewer_player_id_hex);
+    $self->authorize_player($c, $tenant_db, $viewer_player_id);
 
-    my $player_id = $c->args->{player_id};
-    unless ($player_id) {
+    my $player_id_hex = $c->args->{player_id};
+    unless ($player_id_hex) {
         fail($c, HTTP_BAD_REQUEST, "player_id is required");
     }
+    my $player_id = hex($player_id_hex);
 
     my ($player, $err) = $self->retrieve_player($c, $tenant_db, $player_id);
     if ($err) {
@@ -952,7 +953,7 @@ sub player_handler($self, $c) {
         status => true,
         data => {
             player => {
-                id => $player->{id},
+                id => $player_id_hex,
                 display_name => $player->{display_name},
                 is_disqualified => $player->{is_disqualified},
             },
