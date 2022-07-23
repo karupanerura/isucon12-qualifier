@@ -2,33 +2,33 @@ DROP TABLE IF EXISTS competition;
 DROP TABLE IF EXISTS player;
 DROP TABLE IF EXISTS player_score;
 
-CREATE TABLE competition (
-  id VARCHAR(255) NOT NULL PRIMARY KEY,
-  tenant_id BIGINT NOT NULL,
-  title TEXT NOT NULL,
-  finished_at BIGINT NULL,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
-);
+CREATE TABLE `competition` (
+  `id` bigint NOT NULL,
+  `tenant_id` bigint NOT NULL,
+  `title` text NOT NULL,
+  `finished_at` bigint DEFAULT NULL,
+  `created_at` bigint NOT NULL,
+  `updated_at` bigint NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 
-CREATE TABLE player (
-  id VARCHAR(255) NOT NULL PRIMARY KEY,
-  tenant_id BIGINT NOT NULL,
-  display_name TEXT NOT NULL,
-  is_disqualified BOOLEAN NOT NULL,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
-);
+CREATE TABLE `player` (
+  `id` bigint NOT NULL,
+  `tenant_id` bigint NOT NULL,
+  `display_name` text NOT NULL,
+  `is_disqualified` tinyint(1) NOT NULL,
+  `created_at` bigint NOT NULL,
+  `updated_at` bigint NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE player_score (
-  id VARCHAR(255) NOT NULL PRIMARY KEY,
-  tenant_id BIGINT NOT NULL,
-  player_id VARCHAR(255) NOT NULL,
-  competition_id VARCHAR(255) NOT NULL,
-  score BIGINT NOT NULL,
-  row_num BIGINT NOT NULL,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
-);
-
-CREATE INDEX ranking_idx ON player_score (row_num, tenant_id, competition_id);
+CREATE TABLE `player_score` (
+  `tenant_id` bigint NOT NULL,
+  `player_id` bigint NOT NULL,
+  `competition_id` bigint NOT NULL,
+  `score` bigint NOT NULL,
+  `created_at` bigint NOT NULL,
+  `updated_at` bigint NOT NULL,
+  PRIMARY KEY (`tenant_id`, `player_id`, `competition_id`)
+  INDEX `ranking_idx` (`tenant_id`, `competition_id`, `score`);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
