@@ -850,7 +850,7 @@ sub competition_score_handler($self, $c) {
     return $c->render_json({
         status => true,
         data => {
-            rows => scalar @player_score_rows,
+            rows => $row_num,
         }
     }, ScoreHandlerSuccess);
 }
