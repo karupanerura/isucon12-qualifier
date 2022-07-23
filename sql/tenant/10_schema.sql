@@ -29,6 +29,6 @@ CREATE TABLE `player_score` (
   `score` bigint NOT NULL,
   `created_at` bigint NOT NULL,
   `updated_at` bigint NOT NULL,
-  PRIMARY KEY (`tenant_id`, `player_id`, `competition_id`)
-  INDEX `ranking_idx` (`tenant_id`, `competition_id`, `score`);
+  PRIMARY KEY (`tenant_id`, `player_id`, `competition_id`),
+  INDEX `ranking_idx` (`tenant_id`, `competition_id`, `score`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
