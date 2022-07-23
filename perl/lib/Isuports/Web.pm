@@ -592,7 +592,7 @@ sub players_add_handler($self, $c) {
             id => $first_id++,
             tenant_id => $v->{tenant_id}, 
             display_name => $_,
-            is_disqualified => false,
+            is_disqualified => 0,
             created_at => $now, 
             updated_at => $now,
         }, @display_names[$begins..$ends];
