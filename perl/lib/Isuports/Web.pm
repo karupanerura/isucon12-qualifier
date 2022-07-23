@@ -49,7 +49,7 @@ use constant {
 use constant TENANT_NAME_REGEXP => qr/^[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
 
 my $SQL_MAKER = SQL::Maker->new(
-    driver => 'MySQL',
+    driver => 'mysql',
 );
 
 # 管理用DBに接続する
