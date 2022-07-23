@@ -88,12 +88,12 @@ sub connect_to_tenant_db($id) {
 # テナントDBを新規に作成する
 sub create_tenant_db($id) {
     my $host_id  = 1 + ((1+$id) % 2);
-    my $host     = $ENV{"ISUCON_TALENT${host_id}_DB_HOST"} || '127.0.0.1';
+    my $host     = $ENV{"ISUCON_TENANT${host_id}_DB_HOST"} || '127.0.0.1';
     my $port     = $ENV{ISUCON_DB_PORT}         || '3306';
     my $user     = $ENV{ISUCON_DB_USER}         || 'isucon';
     my $password = $ENV{ISUCON_DB_PASSWORD}     || 'isucon';
 
-    my $dsn = "dbi:mysql:database=isuports_talent_${host_id};host=$host;port=$port";
+    my $dsn = "dbi:mysql:database=isuports_tenant_${host_id};host=$host;port=$port";
     my $dbh = DBIx::Sunny->connect($dsn, $user, $password, {
         mysql_enable_utf8mb4   => 1,
         mysql_auto_reconnect   => 1,
@@ -1199,8 +1199,8 @@ sub initialize_handler($self, $c) {
     my $tenant_ids = $self->admin_db->selectcol_arrayref('SELECT id FROM tenant WHERE id > 100');
     for my $host_id (1,2) {
         my @target_tenant_ids = grep {
-            my $talent_host_id  = 1 + ((1+$_) % 2);
-            $talent_host_id == $host_id;
+            my $target_host_id  = 1 + ((1+$_) % 2);
+            $target_host_id == $host_id;
         } @$tenant_ids;
 
         my $tenant_db = connect_to_tenant_db($host_id);
