@@ -914,7 +914,9 @@ sub player_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    $self->authorize_player($c, $tenant_db, $v->{player_id});
+    my $player_id_hex = $v->{player_id};
+    my $player_id = hex($player_id_hex);
+    $self->authorize_player($c, $tenant_db, $player_id);
 
     my $player_id = $c->args->{player_id};
     unless ($player_id) {
@@ -985,7 +987,9 @@ sub competition_ranking_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    $self->authorize_player($c, $tenant_db, $v->{player_id});
+    my $player_id_hex = $v->{player_id};
+    my $player_id = hex($player_id_hex);
+    $self->authorize_player($c, $tenant_db, $player_id);
 
     my $competition_id = $c->args->{competition_id};
     unless ($competition_id) {
@@ -1007,9 +1011,9 @@ sub competition_ranking_handler($self, $c) {
 
     if (!$competition->{finished_at} || ($now < $competition->{finished_at})) {
         my $jet = Redis::Jet->new(server => $ENV{ISUCON_REDIS_SERVER});
-        my $ret = $jet->command('SADD', sprintf('visit_set_%d_%d', $tenant_id, $competition->{id}), $v->{player_id});
+        my $ret = $jet->command('SADD', sprintf('visit_set_%d_%d', $tenant_id, $competition->{id}), $player_id);
         if ($ret != 0 && $ret != 1) {
-            fail($c, HTTP_INTERNAL_SERVER_ERROR, "SADD visit_set_%s_%s %s failed: %s",  $tenant_id, $competition->{id}, $v->{player_id}, $ret);
+            fail($c, HTTP_INTERNAL_SERVER_ERROR, "SADD visit_set_%s_%s %s failed: %s",  $tenant_id, $competition->{id}, $player_id, $ret);
         }
     }
 
