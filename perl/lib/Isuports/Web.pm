@@ -442,7 +442,7 @@ sub billing_report_by_competition($self, $c, $tenant_db, $tenant_id, $competiton
 
     # BillingReport
     return {
-        competition_id      => $comp->{id},
+        competition_id      => sprintf('%x', $comp->{id}),
         competition_title   => $comp->{title},
         player_count        => $player_count,
         visitor_count       => $visitor_count,
