@@ -1,5 +1,6 @@
 package Isuports::Web;
 use v5.36;
+no warnings qw/portable/;
 use utf8;
 use experimental qw(builtin try isa defer);
 use builtin qw(true false);
@@ -70,7 +71,7 @@ sub connect_admin_db() {
 # テナントDBに接続する
 sub connect_to_tenant_db($id) {
     my $host_id  = 1 + ((1+$id) % 2);
-    my $host     = $ENV{"ISUCON_TENANT${$host_id}_DB_HOST"} || '127.0.0.1';
+    my $host     = $ENV{"ISUCON_TENANT${host_id}_DB_HOST"} || '127.0.0.1';
     my $port     = $ENV{ISUCON_DB_PORT}         || '3306';
     my $user     = $ENV{ISUCON_DB_USER}         || 'isucon';
     my $password = $ENV{ISUCON_DB_PASSWORD}     || 'isucon';
@@ -87,7 +88,7 @@ sub connect_to_tenant_db($id) {
 # テナントDBを新規に作成する
 sub create_tenant_db($id) {
     my $host_id  = 1 + ((1+$id) % 2);
-    my $host     = $ENV{"ISUCON_TALENT${$host_id}_DB_HOST"} || '127.0.0.1';
+    my $host     = $ENV{"ISUCON_TALENT${host_id}_DB_HOST"} || '127.0.0.1';
     my $port     = $ENV{ISUCON_DB_PORT}         || '3306';
     my $user     = $ENV{ISUCON_DB_USER}         || 'isucon';
     my $password = $ENV{ISUCON_DB_PASSWORD}     || 'isucon';
