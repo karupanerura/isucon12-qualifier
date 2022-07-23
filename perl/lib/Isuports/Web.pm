@@ -602,7 +602,7 @@ sub players_add_handler($self, $c) {
         $begins = $ends+1;
         $ends = min($ends+5000, $#display_names);
 
-        push @player_details, map {
+        push @player_details, map +{
             id              => sprintf('%x', $_->{id}),
             display_name    => $_->{display_name},
             is_disqualified => false,
