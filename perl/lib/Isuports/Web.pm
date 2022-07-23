@@ -547,7 +547,7 @@ sub players_list_handler($self, $c) {
     defer { $tenant_db->disconnect }
 
     my $players = $tenant_db->select_all(
-        "SELECT * FROM player WHERE tenant_id=? ORDER BY created_at DESC",
+        "SELECT id, display_name, is_disqualified FROM player WHERE tenant_id=? ORDER BY created_at DESC",
         $v->{tenant_id},
     );
     $_->{id} = sprintf('%x', $_->{id}) for @$players;
