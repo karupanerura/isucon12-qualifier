@@ -1206,7 +1206,11 @@ sub initialize_handler($self, $c) {
         my $tenant_db = connect_to_tenant_db($host_id);
         for my $tenant_id (@target_tenant_ids) {
             my $db = "isuports_tenant_$tenant_id";
-            $tenant_db->query("DROP DATABASE $db");
+            try {
+                $tenant_db->query("DROP DATABASE $db");
+            } catch ($e) {
+                warn $e; # ignore
+            }
         }
         $tenant_db->disconnect();
     }
