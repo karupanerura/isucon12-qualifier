@@ -99,6 +99,15 @@ sub create_tenant_db($id) {
         mysql_multi_statements => 1,
     });
 
+    # create database
+    try {
+        $dbh->query("CREATE DATABASE isuports_tenant_$id");
+    }
+    catch ($err) {
+        return sprintf("failed to exec MySQL CREATE DATABASE isuports_tenant_%s, %s", $id, $err)
+    }
+
+    # create tables
     state $schema;
     unless ($schema) {
         open my $fh, '<', TENANT_DB_SCHEMA_FILEPATH
@@ -107,6 +116,7 @@ sub create_tenant_db($id) {
     }
 
     try {
+        my $dbh = connect_to_tenant_db($id);
         $dbh->query($schema);
     }
     catch ($err) {
@@ -303,24 +313,6 @@ sub retrieve_competition($self, $c, $tenant_db, $id) {
     return $competition, undef;
 }
 
-# 排他ロックのためのファイル名を生成する
-sub lock_file_path($id) {
-    my $tenant_db_dir = $ENV{"ISUCON_TENANT_DB_DIR"} || "../tenant_db";
-
-    return join "/", $tenant_db_dir, sprintf("%d.lock", $id);
-}
-
-# 排他ロックする
-sub flock_by_tenant_id($tenant_id) {
-    my $p = lock_file_path($tenant_id);
-
-    sysopen(my $fh, $p, O_RDWR|O_CREAT) or die sprintf("cannot open lock file: %s, %s", $p, $!);
-
-    flock($fh, LOCK_EX) or die sprintf("error flock lock: path=%s, %s", $p, $!);
-
-    return $fh;
-}
-
 use constant TenantWithBilling => {
     id           => JSON_TYPE_STRING,
     name         => JSON_TYPE_STRING,
@@ -427,7 +419,7 @@ sub billing_report_by_competition($self, $c, $tenant_db, $tenant_id, $competiton
     my %billing_map = map { $_ => 'visitor' } @$player_ids;
 
     # スコアを登録した参加者のIDを取得する
-    my $scored_player_ids = $tenant_db->dbh->selectcol_arrayref(
+    my $scored_player_ids = $tenant_db->selectcol_arrayref(
         "SELECT player_id FROM player_score WHERE tenant_id = ? AND competition_id = ?",
         undef, $tenant_id, $comp->{id},
     );
@@ -556,6 +548,7 @@ sub players_list_handler($self, $c) {
         "SELECT * FROM player WHERE tenant_id=? ORDER BY created_at DESC",
         $v->{tenant_id},
     );
+    $_->{id} = sprintf('%x', $_->{id}) for @$players;
 
     return $c->render_json({
         status => true,
@@ -589,26 +582,35 @@ sub players_add_handler($self, $c) {
     }
     my $now = time;
 
-    my $player_details = [];
-    for my $display_name (@display_names) {
-        my $id = $first_id++;
-
-        $tenant_db->query(
-            "INSERT INTO player (id, tenant_id, display_name, is_disqualified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            $id, $v->{tenant_id}, $display_name, false, $now, $now,
-        );
-
-        push $player_details->@* => {
-            id              => $id,
-            display_name    => $display_name,
+    my @player_details;
+    my $begins = 0;
+    my $ends = min(5000, $#display_names);
+    while ($begins < $#display_names) {
+        my @rows = map +{
+            id => $first_id++,
+            tenant_id => $v->{tenant_id}, 
+            display_name => $_,
             is_disqualified => false,
-        }
+            created_at => $now, 
+            updated_at => $now,
+        }, @display_names[$begins..$ends];
+
+        my ($stmt, @bind) = $SQL_MAKER->insert_multi('player_score', [qw/id tenant_id display_name is_disqualified created_at updated_at/], \@rows);
+        $tenant_db->query($stmt, @bind);
+        $begins = $ends+1;
+        $ends = min($ends+5000, $#display_names);
+
+        push @player_details, map {
+            id              => sprintf('%x', $_->{id}),
+            display_name    => $_->{display_name},
+            is_disqualified => false,
+        }, @rows;
     }
 
     return $c->render_json({
         status => true,
         data => {
-            players => $player_details,
+            players => \@player_details,
         }
     }, PlayerAddHandlerSuccess);
 }
@@ -629,7 +631,8 @@ sub player_disqualified_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    my $player_id = $c->args->{player_id};
+    my $player_id_hex = $c->args->{player_id};
+    my $player_id = hex($player_id_hex);
 
     my $now = time;
     $tenant_db->query(
@@ -646,7 +649,7 @@ sub player_disqualified_handler($self, $c) {
         status => true,
         data => {
             player => {
-                id              => $player->{id},
+                id              => $player_id_hex,
                 display_name    => $player->{display_name},
                 is_disqualified => $player->{is_disqualified},
             },
@@ -694,7 +697,7 @@ sub competitions_add_handler($self, $c) {
         status => true,
         data => {
             competition => {
-                id => $id,
+                id => sprintf('%x', $id),
                 title => $title,
                 is_finished => false,
             },
@@ -714,10 +717,11 @@ sub competition_finish_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    my $id = $c->args->{competition_id};
-    unless ($id) {
+    my $id_hex = $c->args->{competition_id};
+    unless ($id_hex) {
         fail($c, HTTP_BAD_REQUEST, "competition_id required")
     }
+    my $id = hex($id_hex);
 
     my (undef, $err) = $self->retrieve_competition($c, $tenant_db, $id);
     if ($err) { # 存在しない大会
@@ -750,10 +754,11 @@ sub competition_score_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    my $competition_id = $c->args->{competition_id};
-    unless ($competition_id) {
+    my $competition_id_hex = $c->args->{competition_id};
+    unless ($competition_id_hex) {
         fail($c, HTTP_BAD_REQUEST, "competition_id required")
     }
+    my $competition_id = hex($competition_id_hex);
 
     my ($comp, $err) = $self->retrieve_competition($c, $tenant_db, $competition_id);
     if ($err) { # 存在しない大会
@@ -790,7 +795,8 @@ sub competition_score_handler($self, $c) {
             fail($c, sprintf("row must have two columns: %s", join ',', $row->@*));
         }
 
-        my ($player_id, $score_str) = $row->@*;
+        my ($player_id_hex, $score_str) = $row->@*;
+        my $player_id = hex($player_id_hex);
         my $score = $score_str+0;
 
         my %record = (
@@ -806,11 +812,11 @@ sub competition_score_handler($self, $c) {
     }
 
     (my $players, $err) = $self->retrieve_players_by_ids($c, $tenant_db, [keys %player_score_map]);
-    if ($err) { # 存在しない参加者が含まれている
+    if ($err) {
         fail($c, HTTP_INTERNAL_SERVER_ERROR, sprintf('failed to get player'));
     }
     my @player_score_rows = sort { $a->{row_num} <=> $b->{row_num} } values %player_score_map;
-    if (@player_score_rows != @$players) {
+    if (@player_score_rows != @$players) {# 存在しない参加者が含まれている
         fail($c, HTTP_BAD_REQUEST, sprintf('player not found'));
     }
 
@@ -826,7 +832,7 @@ sub competition_score_handler($self, $c) {
             my $begins = 0;
             my $ends = min(5000, $#player_score_rows);
             while ($begins < $#player_score_rows) {
-                my ($stmt, @bind) = $SQL_MAKER->insert_multi('player_score', [qw/tenant_id player_id competition_id score created_at updated_at/], @player_score_rows[$begins..$ends]);
+                my ($stmt, @bind) = $SQL_MAKER->insert_multi('player_score', [qw/tenant_id player_id competition_id score created_at updated_at/], [@player_score_rows[$begins..$ends]]);
                 $tenant_db->query($stmt, @bind);
                 $begins = $ends+1;
                 $ends = min($ends+5000, $#player_score_rows);
@@ -923,7 +929,7 @@ sub player_handler($self, $c) {
         $v->{tenant_id},
     );
 
-    my %competition_score_map = @{ $tenant_db->dbh->selectcol_arrayref(
+    my %competition_score_map = @{ $tenant_db->selectcol_arrayref(
         "SELECT competition_id, score FROM player_score WHERE tenant_id = ? AND competition_id IN (?) AND player_id = ?",
         { Columns => [ 1, 2 ] },
         $v->{tenant_id}, [map { $_->{id} } @$competitions], $player->{id},
@@ -999,7 +1005,7 @@ sub competition_ranking_handler($self, $c) {
 
     if (!$competition->{finished_at} || ($now < $competition->{finished_at})) {
         my $jet = Redis::Jet->new(server => $ENV{ISUCON_REDIS_SERVER});
-        my $ret = $jet->command('SADD', sprintf('visit_set_%s_%s', $tenant_id, $competition->{id}), $v->{player_id});
+        my $ret = $jet->command('SADD', sprintf('visit_set_%d_%d', $tenant_id, $competition->{id}), $v->{player_id});
         if ($ret != 0 && $ret != 1) {
             fail($c, HTTP_INTERNAL_SERVER_ERROR, "SADD visit_set_%s_%s %s failed: %s",  $tenant_id, $competition->{id}, $v->{player_id}, $ret);
         }
@@ -1011,6 +1017,7 @@ sub competition_ranking_handler($self, $c) {
         $tenant_id, $competition_id, $rank_after,
     );
     for my $idx (keys @$page_ranks) {
+        $page_ranks->[$idx]->{player_id} = sprintf('%x', $page_ranks->[$idx]->{player_id});
         $page_ranks->[$idx]->{rank} = $rank_after + $idx + 1;
     }
 
@@ -1018,7 +1025,7 @@ sub competition_ranking_handler($self, $c) {
         status => true,
         data => {
             competition => {
-                id          => $competition->{id},
+                id          => sprintf('%x', $competition->{id}),
                 title       => $competition->{title},
                 is_finished => !!$competition->{finished_at},
             },
@@ -1043,7 +1050,9 @@ sub player_competitions_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    $self->authorize_player($c, $tenant_db, $v->{player_id});
+    my $player_id_hex = $v->{player_id};
+    my $player_id = hex($player_id_hex);
+    $self->authorize_player($c, $tenant_db, $player_id);
 
     return competitions_handler($c, $v, $tenant_db);
 }
@@ -1072,7 +1081,7 @@ sub competitions_handler($c, $viewer, $tenant_db) {
     my $competition_details = [];
     for my $comp ($competitions->@*) {
         push $competition_details->@* => {
-            id          => $comp->{id},
+            id          => sprintf('%x', $comp->{id}),
             title       => $comp->{title},
             is_finished => !!$comp->{finished_at},
         };
@@ -1146,7 +1155,9 @@ sub me_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    (my $player, $err) = $self->retrieve_player($c, $tenant_db, $v->{player_id});
+    my $player_id_hex = $v->{player_id};
+    my $player_id = hex($player_id_hex);
+    (my $player, $err) = $self->retrieve_player($c, $tenant_db, $player_id);
     if ($err) {
         return $c->render_json({
             status => true,
@@ -1164,7 +1175,7 @@ sub me_handler($self, $c) {
         data => {
             tenant => $tenant_detail,
             me => {
-                id              => $player->{id},
+                id              => $player_id_hex,
                 display_name    => $player->{display_name},
                 is_disqualified => $player->{is_disqualified},
             },
@@ -1183,6 +1194,23 @@ use constant InitializeHandlerSuccess => SuccessResult({
 # ベンチマーカーが起動したときに最初に呼ぶ
 # データベースの初期化などが実行されるため、スキーマを変更した場合などは適宜改変すること
 sub initialize_handler($self, $c) {
+    # テナントDBの削除
+    my $tenant_ids = $self->admin_db->selectcol_arrayref('SELECT id FROM tenant WHERE id > 100');
+    for my $host_id (1,2) {
+        my @target_tenant_ids = grep {
+            my $talent_host_id  = 1 + ((1+$_) % 2);
+            $talent_host_id == $host_id;
+        } @$tenant_ids;
+
+        my $tenant_db = connect_to_tenant_db($host_id);
+        for my $tenant_id (@target_tenant_ids) {
+            my $db = "isuports_tenant_$tenant_id";
+            $tenant_db->query("DROP DATABASE $db");
+        }
+        $tenant_db->disconnect();
+    }
+
+    # DB初期化
     my $e = system(INITIALIZE_SCRIPT);
     if ($e) {
         fail($c, HTTP_INTERNAL_SERVER_ERROR, "error exec.Command: %s", $e);
@@ -1193,18 +1221,6 @@ sub initialize_handler($self, $c) {
     my $ret = $jet->command(qw/SET id_generator 2678400000/);
     if (!$ret || $ret ne 'OK') {
         fail($c, HTTP_INTERNAL_SERVER_ERROR, "SET id_generator failed: %s", $ret);
-    }
-
-    
-
-    # テナントDBの削除
-    for my $host_id (1,2) {
-        my $tenant_db = connect_to_tenant_db($host_id);
-        my $dbs = $tenant_db->dbh->selectcol_arrayref(q!SELECT table_schema FROM (SELECT table_schema, REPLACE(table_schema, 'isuports_tenant_', '') AS tenant_id FROM information_schema.tables WHERE table_schema LIKE 'isuports_tenant_%' GROUP BY table_schema) a WHERE tenant_id > 100;!);
-        for my $db (@$dbs) {
-            $tenant_db->query("DROP DATABASE $db");
-        }
-        $tenant_db->disconnect();
     }
 
     return $c->render_json({
