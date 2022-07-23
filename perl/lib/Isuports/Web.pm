@@ -639,7 +639,7 @@ sub player_disqualified_handler($self, $c) {
     my $now = time;
     $tenant_db->query(
         "UPDATE player SET is_disqualified = ?, updated_at = ? WHERE id = ?",
-        true, $now, $player_id,
+        1, $now, $player_id,
     );
 
     my ($player, $err) = $self->retrieve_player($c, $tenant_db, $player_id);
