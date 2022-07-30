@@ -820,7 +820,6 @@ sub competition_score_handler($self, $c) {
         try {
             $tenant_db->query(
                 "DELETE FROM player_score WHERE competition_id = ?",
-                $v->{tenant_id},
                 $competition_id,
             );
 
