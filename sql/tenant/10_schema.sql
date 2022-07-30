@@ -8,7 +8,8 @@ CREATE TABLE `competition` (
   `finished_at` bigint DEFAULT NULL,
   `created_at` bigint NOT NULL,
   `updated_at` bigint NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  INDEX `created_at_idx` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE `player` (
@@ -17,7 +18,8 @@ CREATE TABLE `player` (
   `is_disqualified` tinyint(1) NOT NULL,
   `created_at` bigint NOT NULL,
   `updated_at` bigint NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  INDEX `created_at_idx` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE `player_score` (
@@ -28,5 +30,5 @@ CREATE TABLE `player_score` (
   `created_at` bigint NOT NULL,
   `updated_at` bigint NOT NULL,
   PRIMARY KEY (`player_id`, `competition_id`),
-  INDEX `ranking_idx` (`competition_id`, `score`, `row_num`)
+  INDEX `ranking_idx` (`competition_id`, `score` DESC, `row_num`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
