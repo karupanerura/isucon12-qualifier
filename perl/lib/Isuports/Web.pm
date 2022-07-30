@@ -584,7 +584,6 @@ sub players_add_handler($self, $c) {
     while ($begins < $#display_names) {
         my @rows = map {
             id => $first_id++,
-            tenant_id => $v->{tenant_id}, 
             display_name => $_,
             is_disqualified => 0,
             created_at => $now, 
@@ -685,8 +684,8 @@ sub competitions_add_handler($self, $c) {
     }
 
     $tenant_db->query(
-        "INSERT INTO competition (id, tenant_id, title, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        $id, $v->{tenant_id}, $title, undef, $now, $now,
+        "INSERT INTO competition (id, title, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        $id, $title, undef, $now, $now,
     );
 
     return $c->render_json({
@@ -811,7 +810,7 @@ sub competition_score_handler($self, $c) {
     if ($err) {
         fail($c, HTTP_INTERNAL_SERVER_ERROR, sprintf('failed to get player'));
     }
-    my @player_score_rows = map $_->[1], sort { $a->[0] <=> $b->[0] } map { [delete $_->{row_num}, $_] } values %player_score_map;
+    my @player_score_rows = values %player_score_map;
     if (@player_score_rows != @$players) {# 存在しない参加者が含まれている
         fail($c, HTTP_BAD_REQUEST, sprintf('player not found'));
     }
