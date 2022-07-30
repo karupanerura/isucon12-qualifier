@@ -9,6 +9,7 @@ my $app = Isuports::Web->psgi($root_dir);
 
 builder {
     enable 'ReverseProxy';
+    enable 'AccessLog';
 
     # 全APIにCache-Control: privateを設定する
     enable '+Isuports::SetCacheControlPrivateMiddleware';
