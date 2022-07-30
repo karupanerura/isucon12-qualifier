@@ -795,7 +795,6 @@ sub competition_score_handler($self, $c) {
         my $score = $score_str+0;
 
         my %record = (
-            tenant_id       => $v->{tenant_id},
             player_id       => $player_id,
             competition_id  => $competition_id,
             score           => $score,
