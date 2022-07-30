@@ -422,8 +422,8 @@ sub billing_report_by_competition($self, $c, $tenant_db, $tenant_id, $competiton
 
     # スコアを登録した参加者のIDを取得する
     my $scored_player_ids = $tenant_db->selectcol_arrayref(
-        "SELECT player_id FROM player_score WHERE tenant_id = ? AND competition_id = ?",
-        undef, $tenant_id, $comp->{id},
+        "SELECT player_id FROM player_score WHERE competition_id = ?",
+        undef, $comp->{id},
     );
     $billing_map{$_} = 'player' for @$scored_player_ids;
 
@@ -497,10 +497,7 @@ sub tenants_billing_handler($self, $c) {
         my $tenant_db = connect_to_tenant_db($tenant->{id});
         defer { $tenant_db->disconnect }
 
-        my $competitions = $tenant_db->select_all(
-            "SELECT * FROM competition WHERE tenant_id=?",
-            $tenant->{id},
-        );
+        my $competitions = $tenant_db->select_all("SELECT * FROM competition");
 
         for my $comp ($competitions->@*) {
             my $report = $self->billing_report_by_competition($c, $tenant_db, $tenant->{id}, $comp->{id});
@@ -546,10 +543,7 @@ sub players_list_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    my $players = $tenant_db->select_all(
-        "SELECT id, display_name, is_disqualified FROM player WHERE tenant_id=? ORDER BY created_at DESC",
-        $v->{tenant_id},
-    );
+    my $players = $tenant_db->select_all("SELECT id, display_name, is_disqualified FROM player ORDER BY created_at DESC");
     $_->{id} = sprintf('%x', $_->{id}) for @$players;
 
     return $c->render_json({
@@ -826,7 +820,7 @@ sub competition_score_handler($self, $c) {
         my $txn = $tenant_db->txn_scope();
         try {
             $tenant_db->query(
-                "DELETE FROM player_score WHERE tenant_id = ? AND competition_id = ?",
+                "DELETE FROM player_score WHERE competition_id = ?",
                 $v->{tenant_id},
                 $competition_id,
             );
@@ -872,10 +866,7 @@ sub billing_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    my $competitions = $tenant_db->select_all(
-        "SELECT * FROM competition WHERE tenant_id=? ORDER BY created_at DESC",
-        $v->{tenant_id},
-    );
+    my $competitions = $tenant_db->select_all("SELECT * FROM competition ORDER BY created_at DESC");
 
     my $tenant_billing_reports = [];
     for my $comp ($competitions->@*) {
@@ -929,14 +920,10 @@ sub player_handler($self, $c) {
         fail($c, HTTP_NOT_FOUND, "player not found");
     }
 
-    my $competitions = $tenant_db->select_all(
-        "SELECT id, title FROM competition WHERE tenant_id = ? ORDER BY created_at ASC",
-        $v->{tenant_id},
-    );
+    my $competitions = $tenant_db->select_all("SELECT id, title FROM competition ORDER BY created_at ASC");
 
-    my %competition_score_map = map { $_->{competition_id} => $_->{score} } @{ $tenant_db->select_all(
-        "SELECT competition_id, score FROM player_score WHERE tenant_id = ? AND competition_id IN (?) AND player_id = ?",
-        $v->{tenant_id}, [map { $_->{id} } @$competitions], $player->{id},
+    my %competition_score_map = @{ $tenant_db->selectcol_arrayref(
+        "SELECT competition_id, score FROM player_score WHERE player_id = ?", { Columns => [1, 2] }, $player->{id},
     )};
 
     my @player_score_details;
@@ -1020,8 +1007,8 @@ sub competition_ranking_handler($self, $c) {
 
     my $rank_after = $c->request->query_parameters->{rank_after} || 0;
     my $page_ranks = $tenant_db->select_all(
-        "SELECT ps.score, ps.player_id, p.display_name AS player_display_name FROM player_score ps INNER JOIN player p ON p.id = ps.player_id WHERE ps.tenant_id = ? AND ps.competition_id = ? ORDER BY ps.score DESC LIMIT 100 OFFSET ?",
-        $tenant_id, $competition_id, $rank_after,
+        "SELECT ps.score, ps.player_id, p.display_name AS player_display_name FROM player_score ps INNER JOIN player p ON p.id = ps.player_id WHERE ps.competition_id = ? ORDER BY ps.score DESC, ps.row_num ASC LIMIT 100 OFFSET ?",
+        $competition_id, $rank_after,
     );
     for my $idx (keys @$page_ranks) {
         $page_ranks->[$idx]->{player_id} = sprintf('%x', $page_ranks->[$idx]->{player_id});
@@ -1080,10 +1067,7 @@ sub organizer_competitions_handler($self, $c) {
 }
 
 sub competitions_handler($c, $viewer, $tenant_db) {
-    my $competitions = $tenant_db->select_all(
-        "SELECT * FROM competition WHERE tenant_id=? ORDER BY created_at DESC",
-        $viewer->{tenant_id},
-    );
+    my $competitions = $tenant_db->select_all("SELECT * FROM competition ORDER BY created_at DESC");
 
     my $competition_details = [];
     for my $comp ($competitions->@*) {
