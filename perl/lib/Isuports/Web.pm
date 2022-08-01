@@ -884,7 +884,7 @@ sub billing_handler($self, $c) {
 
     my $fixed_billing_report_map = $self->admin_db->selectall_hashref(
         "SELECT CONV(competition_id,10,16) AS competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen FROM billing_reports WHERE tenant_id = ?"
-    , 'competition_id', $v->{tenant_id});
+    , 'competition_id', undef, $v->{tenant_id});
 
     my @tenant_billing_reports = map { $fixed_billing_report_map->{$_} } @$competition_ids;
     return $c->render_json({
