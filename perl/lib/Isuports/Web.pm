@@ -714,7 +714,7 @@ sub competition_finish_handler($self, $c) {
             my $report = $self->billing_report_by_competition($c, $tenant_db, $v->{tenant_id}, $competition);
             $self->admin_db->query(
                 "INSERT INTO billing_reports (tenant_id, competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                $v->{tenant_id}, ,
+                $v->{tenant_id}, @{$report}{qw/competition_id competition_title player_count visitor_count billing_player_yen billing_visitor_yen billing_yen/}, $now,
             );
             $txn_tenant->commit();
             $txn_admin->commit();
