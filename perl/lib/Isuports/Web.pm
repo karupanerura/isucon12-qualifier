@@ -882,7 +882,7 @@ sub billing_handler($self, $c) {
 
     my $competition_ids = $tenant_db->selectcol_arrayref("SELECT id FROM competition ORDER BY created_at DESC");
 
-    my $fixed_billing_report_map = $self->admin_db->select_all(
+    my $fixed_billing_report_map = $self->admin_db->selectall_hashref(
         "SELECT CONV(competition_id,10,16) AS competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen FROM billing_reports WHERE tenant_id = ?"
     , 'competition_id', $v->{tenant_id});
 
