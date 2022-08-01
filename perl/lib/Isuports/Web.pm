@@ -492,8 +492,8 @@ sub tenants_billing_handler($self, $c) {
         id           => $_->{id},
         name         => $_->{name},
         display_name => $_->{display_name},
-        billing      => $billing{$_->{id}} || 0,
-    }, @$tenants;
+        billing      => $billing{$_->{id}},
+    }, grep exists $billing{$_->{id}}, @$tenants;
     return $c->render_json({
         status => true,
         data => {
@@ -665,10 +665,36 @@ sub competitions_add_handler($self, $c) {
         fail($c, HTTP_INTERNAL_SERVER_ERROR, "error dispenseID: %s", $err);
     }
 
-    $tenant_db->query(
-        "INSERT INTO competition (id, title, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-        $id, $title, undef, $now, $now,
-    );
+    {
+        my $txn_admin = $self->admin_db->txn_scope();
+        my $txn_tenant = $tenant_db->txn_scope();
+        try {
+            $self->admin_db->query(
+                "INSERT INTO billing_reports (tenant_id, competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                $v->{tenant_id}, $id, $title, 0, 0, 0, 0, 0, undef,
+            );
+            $tenant_db->query(
+                "INSERT INTO competition (id, title, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                $id, $title, undef, $now, $now,
+            );
+            $txn_tenant->commit();
+            $txn_admin->commit();
+        } catch ($e) {
+            $txn_admin->rollback();
+            try {
+                $txn_tenant->rollback();
+            } catch ($e) {
+                warn "split brain $e: manually rollback started";
+                try {
+                    $tenant_db->query("DELETE FROM competition WHERE id = ?", $id);
+                    warn "manually rollback complete";
+                } catch ($e) {
+                    warn "split brain $e: manually rollback failed";
+                };
+            };
+            die $e;
+        }
+    };
 
     return $c->render_json({
         status => true,
@@ -722,8 +748,8 @@ sub competition_finish_handler($self, $c) {
 
             my $report = $self->billing_report_by_competition($c, $tenant_db, $v->{tenant_id}, $competition);
             $self->admin_db->query(
-                "INSERT INTO billing_reports (tenant_id, competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                $v->{tenant_id}, @{$report}{qw/competition_id competition_title player_count visitor_count billing_player_yen billing_visitor_yen billing_yen/}, $now,
+                "UPDATE billing_reports SET player_count = ?, visitor_count = ?, billing_player_yen = ?, billing_visitor_yen = ?, billing_yen = ?, finished_at = ? WHERE tenant_id = ? AND competition_id = ?",
+                @{$report}{qw/player_count visitor_count billing_player_yen billing_visitor_yen billing_yen/}, $now, $v->{tenant_id}, $id,
             );
             $txn_tenant->commit();
             $txn_admin->commit();
