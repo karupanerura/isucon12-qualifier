@@ -465,10 +465,16 @@ sub tenants_billing_handler($self, $c) {
         fail($c, HTTP_FORBIDDEN, "admin role required");
     }
 
-    my $before_id = $c->request->query_parameters->{"before"} || 0;
-    my $tenant_billings = $self->admin_db->select_all(
-        "SELECT t.id, t.name, t.display_name, s.billing FROM tenant t INNER JOIN (SELECT tenant_id, SUM(billing_yen) AS billing FROM billing_reports GROUP BY tenant_id) s ON s.tenant_id = t.id WHERE t.id > ? ORDER BY id DESC LIMIT 10"
-    , $before_id);
+    my $tenant_billings;
+    if (my $before_id = $c->request->query_parameters->{"before"}) {
+        $tenant_billings = $self->admin_db->select_all(
+            "SELECT t.id, t.name, t.display_name, s.billing FROM tenant t INNER JOIN (SELECT tenant_id, SUM(billing_yen) AS billing FROM billing_reports GROUP BY tenant_id) s ON s.tenant_id = t.id WHERE t.id < ? ORDER BY id DESC LIMIT 10"
+        , $before_id);
+    } else {
+        $tenant_billings = $self->admin_db->select_all(
+            "SELECT t.id, t.name, t.display_name, s.billing FROM tenant t INNER JOIN (SELECT tenant_id, SUM(billing_yen) AS billing FROM billing_reports GROUP BY tenant_id) s ON s.tenant_id = t.id ORDER BY id DESC LIMIT 10"
+        );
+    }
     return $c->render_json({
         status => true,
         data => {
