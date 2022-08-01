@@ -882,11 +882,11 @@ sub billing_handler($self, $c) {
 
     my $competition_ids = $tenant_db->selectcol_arrayref("SELECT id FROM competition ORDER BY created_at DESC");
 
-    my %fixed_billing_report_map = map { $_->{competition_id} => $_ } @{ $self->admin_db->selectcol_arrayref(
+    my $fixed_billing_report_map = $self->admin_db->select_all(
         "SELECT CONV(competition_id,10,16) AS competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen FROM billing_reports WHERE tenant_id = ?"
-    , undef, $v->{tenant_id}) };
+    , 'competition_id', $v->{tenant_id});
 
-    my @tenant_billing_reports = map { $fixed_billing_report_map{$_} } @$competition_ids;
+    my @tenant_billing_reports = map { $fixed_billing_report_map->{$_} } @$competition_ids;
     return $c->render_json({
         status => true,
         data => {
