@@ -405,15 +405,10 @@ use constant BillingReport => {
 };
 
 # 大会ごとの課金レポートを計算する
-sub billing_report_by_competition($self, $c, $tenant_db, $tenant_id, $competiton_id) {
-    my ($comp, $err) = $self->retrieve_competition($c, $tenant_db, $competiton_id);
-    if ($err) {
-        fail($c, HTTP_INTERNAL_SERVER_ERROR, sprintf("error retrieve_competition: %s", $err));
-    }
-
+sub billing_report_by_competition($self, $c, $tenant_db, $tenant_id, $competiton) {
     # ランキングにアクセスした参加者のIDを取得する
     my $jet = Redis::Jet->new(server => $ENV{ISUCON_REDIS_SERVER});
-    my $player_ids = $jet->command('SMEMBERS', sprintf('visit_set_%s_%s', $tenant_id, $comp->{id}));
+    my $player_ids = $jet->command('SMEMBERS', sprintf('visit_set_%s_%s', $tenant_id, $competiton->{id}));
     if (!$player_ids || ref $player_ids ne 'ARRAY') {
         fail($c, HTTP_INTERNAL_SERVER_ERROR, "SET id_generator failed: %s", $player_ids);
     }
@@ -423,13 +418,13 @@ sub billing_report_by_competition($self, $c, $tenant_db, $tenant_id, $competiton
     # スコアを登録した参加者のIDを取得する
     my $scored_player_ids = $tenant_db->selectcol_arrayref(
         "SELECT player_id FROM player_score WHERE competition_id = ?",
-        undef, $comp->{id},
+        undef, $competiton->{id},
     );
     $billing_map{$_} = 'player' for @$scored_player_ids;
 
     # 大会が終了している場合のみ請求金額が確定するので計算する
     my ($player_count, $visitor_count) = (0,0);
-    if ($comp->{finished_at}) {
+    if ($competiton->{finished_at}) {
         for my $category (values %billing_map) {
             if ($category eq 'player') {
                 $player_count++
@@ -442,8 +437,8 @@ sub billing_report_by_competition($self, $c, $tenant_db, $tenant_id, $competiton
 
     # BillingReport
     return {
-        competition_id      => sprintf('%x', $comp->{id}),
-        competition_title   => $comp->{title},
+        competition_id      => $competiton->{id},
+        competition_title   => $competiton->{title},
         player_count        => $player_count,
         visitor_count       => $visitor_count,
         billing_player_yen  => 100 * $player_count, # スコアを登録した参加者は100円
@@ -478,44 +473,22 @@ sub tenants_billing_handler($self, $c) {
     #   を合計したものを
     # テナントの課金とする
     my $tenants = $self->admin_db->select_all(
-        "SELECT * FROM tenant ORDER BY id DESC"
-    );
+        "SELECT id, name, display_name FROM tenant WHERE id > ? ORDER BY id DESC LIMIT 10"
+    , $before_id);
+    my %billing = @{ $self->admin_db->selectcol_arrayref(
+        "SELECT tenant_id, SUM(billing_yen) AS billing FROM billing_reports GROUP BY tenant_id"
+    , { Columns => [1, 2] }) };
 
-    my $tenant_billings = [];
-    for my $tenant ($tenants->@*) {
-        if ($before_id != 0 && $before_id <= $tenant->{id}) {
-            next;
-        }
-
-        my $tenant_billing = {
-            id           => $tenant->{id},
-            name         => $tenant->{name},
-            display_name => $tenant->{display_name},
-            billing      => 0,
-        };
-
-        my $tenant_db = connect_to_tenant_db($tenant->{id});
-        defer { $tenant_db->disconnect }
-
-        my $competitions = $tenant_db->select_all("SELECT * FROM competition");
-
-        for my $comp ($competitions->@*) {
-            my $report = $self->billing_report_by_competition($c, $tenant_db, $tenant->{id}, $comp->{id});
-
-            $tenant_billing->{billing} += $report->{billing_yen};
-        }
-
-        push $tenant_billings->@* => $tenant_billing;
-
-        if ($tenant_billings->@* >= 10) {
-            last;
-        }
-    }
-
+    my @tenant_billings = map +{
+        id           => $_->{id},
+        name         => $_->{name},
+        display_name => $_->{display_name},
+        billing      => $billing{$_->{id}} || 0,
+    }, @$tenants;
     return $c->render_json({
         status => true,
         data => {
-            tenants => $tenant_billings,
+            tenants => \@tenant_billings,
         },
     }, TenantsBillingHandlerSuccess);
 }
@@ -718,17 +691,52 @@ sub competition_finish_handler($self, $c) {
     }
     my $id = hex($id_hex);
 
-    my (undef, $err) = $self->retrieve_competition($c, $tenant_db, $id);
+    my ($before_competition, $err) = $self->retrieve_competition($c, $tenant_db, $id);
     if ($err) { # 存在しない大会
         fail($c, HTTP_NOT_FOUND, "competition not found");
     }
 
     my $now = time;
+    {
+        my $txn_admin = $self->admin_db->txn_scope();
+        my $txn_tenant = $tenant_db->txn_scope();
+        try {
+            $tenant_db->query(
+                "UPDATE competition SET finished_at = ?, updated_at = ? WHERE id = ?",
+                $now, $now, $id,
+            );
+            my $competition = {
+                %$before_competition,
+                finished_at => $now,
+                updated_at  => $now,
+            };
 
-    $tenant_db->query(
-        "UPDATE competition SET finished_at = ?, updated_at = ? WHERE id = ?",
-        $now, $now, $id,
-    );
+            my $report = $self->billing_report_by_competition($c, $tenant_db, $v->{tenant_id}, $competition);
+            $self->admin_db->query(
+                "INSERT INTO billing_reports (tenant_id, competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                $v->{tenant_id}, ,
+            );
+            $txn_tenant->commit();
+            $txn_admin->commit();
+        } catch ($e) {
+            $txn_admin->rollback();
+            try {
+                $txn_tenant->rollback();
+            } catch ($e) {
+                warn "split brain $e: manually rollback started";
+                try {
+                    $tenant_db->query(
+                        "UPDATE competition SET finished_at = ?, updated_at = ? WHERE id = ?",
+                        @{$before_competition}{qw/finished_at updated_at id/},
+                    );
+                    warn "manually rollback complete";
+                } catch ($e) {
+                    warn "split brain $e: manually rollback failed";
+                };
+            };
+            die $e;
+        }
+    }
 
     return $c->render_json({ status => true }, SuccessResult);
 }
@@ -863,19 +871,17 @@ sub billing_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    my $competitions = $tenant_db->select_all("SELECT * FROM competition ORDER BY created_at DESC");
+    my $competition_ids = $tenant_db->selectcol_arrayref("SELECT id FROM competition ORDER BY created_at DESC");
 
-    my $tenant_billing_reports = [];
-    for my $comp ($competitions->@*) {
-        my $report = $self->billing_report_by_competition($c, $tenant_db, $v->{tenant_id}, $comp->{id});
+    my %fixed_billing_report_map = map { $_->{id} => $_ } @{ $self->admin_db->selectcol_arrayref(
+        "SELECT CONV(competition_id,10,16) AS competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen FROM billing_reports WHERE tenant_id = ?"
+    , $v->{tenant_id}) };
 
-        push $tenant_billing_reports->@*, $report;
-    }
-
+    my @tenant_billing_reports = map { $fixed_billing_report_map{$_} } @$competition_ids;
     return $c->render_json({
         status => true,
         data => {
-            reports => $tenant_billing_reports,
+            reports => \@tenant_billing_reports,
         }
     }, BillingHandlerSuccess);
 }
