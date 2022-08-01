@@ -24,7 +24,7 @@ CREATE TABLE `billing_reports` (
   billing_player_yen  BIGINT NOT NULL,
   billing_visitor_yen BIGINT NOT NULL,
   billing_yen         BIGINT NOT NULL,
-  created_at          BIGINT NOT NULL,
+  finished_at         BIGINT DEFAULT NULL,
   PRIMARY KEY (`tenant_id`, `competition_id`),
   INDEX `billing_idx` (`tenant_id`, `billing_yen`)
 ) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4;
