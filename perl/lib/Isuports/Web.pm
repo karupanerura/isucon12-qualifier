@@ -891,7 +891,7 @@ sub billing_handler($self, $c) {
             $fixed_billing_report_map->{$_->{id}}->{competition_id} = sprintf '%x', $_;
             $fixed_billing_report_map->{$_->{id}};
         } : +{
-            competition_id      => $_->{id},
+            competition_id      => sprintf('%x', $_->{id}),
             competition_title   => $_->{title},
             player_count        => 0,
             visitor_count       => 0,
