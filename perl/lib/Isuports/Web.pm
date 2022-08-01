@@ -272,7 +272,7 @@ sub retrieve_tenant_row_from_header($self, $c) {
     unless (exists $cache{$tenant_name}) {
         $cache{$tenant_name} = $self->admin_db->select_row("SELECT * FROM tenant WHERE name = ?", $tenant_name);
     }
-    unless (exists $cache{$tenant_name}) {
+    unless (defined $cache{$tenant_name}) {
         return undef, sprintf("failed to Select tenant: name=%s", $tenant_name);
     }
 
