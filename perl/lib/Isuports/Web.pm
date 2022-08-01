@@ -475,9 +475,18 @@ sub tenants_billing_handler($self, $c) {
     my $tenants = $self->admin_db->select_all(
         "SELECT id, name, display_name FROM tenant WHERE id > ? ORDER BY id DESC LIMIT 10"
     , $before_id);
+    unless (@$tenants) {
+        return $c->render_json({
+            status => true,
+            data => {
+                tenants => [],
+            },
+        }, TenantsBillingHandlerSuccess);
+    }
+
     my %billing = @{ $self->admin_db->selectcol_arrayref(
-        "SELECT tenant_id, SUM(billing_yen) AS billing FROM billing_reports GROUP BY tenant_id"
-    , { Columns => [1, 2] }) };
+        "SELECT tenant_id, SUM(billing_yen) FROM billing_reports WHERE tenant_id BETWEEN ? AND ? GROUP BY tenant_id"
+    , { Columns => [1, 2] }, $tenants->[$#{$tenants}]->{id}, $tenants->[0]->{id}) };
 
     my @tenant_billings = map +{
         id           => $_->{id},
