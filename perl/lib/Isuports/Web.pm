@@ -466,38 +466,13 @@ sub tenants_billing_handler($self, $c) {
     }
 
     my $before_id = $c->request->query_parameters->{"before"} || 0;
-    # テナントごとに
-    #   大会ごとに
-    #     scoreが登録されているplayer * 100
-    #     scoreが登録されていないplayerでアクセスした人 * 10
-    #   を合計したものを
-    # テナントの課金とする
-    my $tenants = $self->admin_db->select_all(
-        "SELECT id, name, display_name FROM tenant WHERE id > ? ORDER BY id DESC LIMIT 10"
+    my $tenant_billings = $self->admin_db->select_all(
+        "SELECT t.id, t.name, t.display_name, s.billing FROM tenant t INNER JOIN (SELECT tenant_id, SUM(billing_yen) AS billing FROM billing_reports GROUP BY tenant_id) s ON s.tenant_id = t.id WHERE t.id > ? ORDER BY id DESC LIMIT 10"
     , $before_id);
-    unless (@$tenants) {
-        return $c->render_json({
-            status => true,
-            data => {
-                tenants => [],
-            },
-        }, TenantsBillingHandlerSuccess);
-    }
-
-    my %billing = @{ $self->admin_db->selectcol_arrayref(
-        "SELECT tenant_id, SUM(billing_yen) FROM billing_reports WHERE tenant_id BETWEEN ? AND ? GROUP BY tenant_id"
-    , { Columns => [1, 2] }, $tenants->[$#{$tenants}]->{id}, $tenants->[0]->{id}) };
-
-    my @tenant_billings = map +{
-        id           => $_->{id},
-        name         => $_->{name},
-        display_name => $_->{display_name},
-        billing      => $billing{$_->{id}},
-    }, grep exists $billing{$_->{id}}, @$tenants;
     return $c->render_json({
         status => true,
         data => {
-            tenants => \@tenant_billings,
+            tenants => $tenant_billings,
         },
     }, TenantsBillingHandlerSuccess);
 }
@@ -906,26 +881,17 @@ sub billing_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    my $competitions = $tenant_db->select_all("SELECT id, title FROM competition ORDER BY created_at DESC");
+    my $competition_ids = $tenant_db->selectcol_arrayref("SELECT id FROM competition ORDER BY created_at DESC");
 
     my $fixed_billing_report_map = $self->admin_db->selectall_hashref(
         "SELECT competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen FROM billing_reports WHERE tenant_id = ?"
     , 'competition_id', undef, $v->{tenant_id});
 
     my @tenant_billing_reports = map {
-        exists $fixed_billing_report_map->{$_->{id}} ? do {
-            $fixed_billing_report_map->{$_->{id}}->{competition_id} = sprintf '%x', $_;
-            $fixed_billing_report_map->{$_->{id}};
-        } : +{
-            competition_id      => sprintf('%x', $_->{id}),
-            competition_title   => $_->{title},
-            player_count        => 0,
-            visitor_count       => 0,
-            billing_player_yen  => 0,
-            billing_visitor_yen => 0,
-            billing_yen         => 0,
-        }
-    } @$competitions;
+        my $br = $fixed_billing_report_map->{$_};
+        $br->{competition_id} = sprintf '%x', $_;
+        $br;
+    } grep exists $fixed_billing_report_map->{$_}, @$competition_ids;
     return $c->render_json({
         status => true,
         data => {
