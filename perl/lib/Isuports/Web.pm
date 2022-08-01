@@ -269,15 +269,14 @@ sub retrieve_tenant_row_from_header($self, $c) {
 
     # テナントの存在確認
     state %cache;
-    my $tenant;
-    if (exists $cache{$tenant_name}) {
-        $tenant = { %{ $cache{$tenant_name} } }; # shallow copy
-    } else {
+    unless (exists $cache{$tenant_name}) {
         $cache{$tenant_name} = $self->admin_db->select_row("SELECT * FROM tenant WHERE name = ?", $tenant_name);
     }
-    unless ($tenant) {
+    unless (exists $cache{$tenant_name}) {
         return undef, sprintf("failed to Select tenant: name=%s", $tenant_name);
     }
+
+    my $tenant = { %{ $cache{$tenant_name} } }; # shallow copy
     return $tenant, undef;
 }
 
