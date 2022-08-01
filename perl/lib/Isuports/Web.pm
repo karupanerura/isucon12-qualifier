@@ -670,7 +670,7 @@ sub competitions_add_handler($self, $c) {
         my $txn_tenant = $tenant_db->txn_scope();
         try {
             $self->admin_db->query(
-                "INSERT INTO billing_reports (tenant_id, competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO billing_reports (tenant_id, competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 $v->{tenant_id}, $id, $title, 0, 0, 0, 0, 0, undef,
             );
             $tenant_db->query(
