@@ -880,13 +880,26 @@ sub billing_handler($self, $c) {
     my $tenant_db = connect_to_tenant_db($v->{tenant_id});
     defer { $tenant_db->disconnect }
 
-    my $competition_ids = $tenant_db->selectcol_arrayref("SELECT id FROM competition ORDER BY created_at DESC");
+    my $competitions = $tenant_db->select_all("SELECT id, title FROM competition ORDER BY created_at DESC");
 
     my $fixed_billing_report_map = $self->admin_db->selectall_hashref(
-        "SELECT CONV(competition_id,10,16) AS competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen FROM billing_reports WHERE tenant_id = ?"
+        "SELECT competition_id, competition_title, player_count, visitor_count, billing_player_yen, billing_visitor_yen, billing_yen FROM billing_reports WHERE tenant_id = ?"
     , 'competition_id', undef, $v->{tenant_id});
 
-    my @tenant_billing_reports = map { $fixed_billing_report_map->{$_} } @$competition_ids;
+    my @tenant_billing_reports = map {
+        exists $fixed_billing_report_map->{$_->{id}} ? do {
+            $fixed_billing_report_map->{$_->{id}}->{competition_id} = sprintf '%x', $_;
+            $fixed_billing_report_map->{$_->{id}};
+        } : +{
+            competition_id      => $_->{id},
+            competition_title   => $_->{title},
+            player_count        => 0,
+            visitor_count       => 0,
+            billing_player_yen  => 0,
+            billing_visitor_yen => 0,
+            billing_yen         => 0,
+        }
+    } @$competitions;
     return $c->render_json({
         status => true,
         data => {
